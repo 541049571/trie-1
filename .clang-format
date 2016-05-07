@@ -1,0 +1,20 @@
+BasedOnStyle: LLVM
+IndentWidth: 8
+ColumnLimit: 80
+Language: Cpp
+# Force pointers to the type for C++.
+DerivePointerAlignment: false
+PointerAlignment: Left
+AlignConsecutiveAssignments: true
+#AlignConsecutiveDeclarations: true
+BreakBeforeBraces: Linux
+IndentCaseLabels: false
+AllowShortIfStatementsOnASingleLine: false
+UseTab: Never #ForIndentation
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpaceBeforeAssignmentOperators: true
+SpaceAfterCStyleCast: false
+PointerAlignment: Right
+AllowShortCaseLabelsOnASingleLine: true
+SortIncludes: false
