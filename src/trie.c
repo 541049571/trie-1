@@ -312,7 +312,7 @@ bool trie_insert(struct trie *root, const uint8_t *key, const size_t key_size,
                         struct trie_node *chain =
                             new_chain(root, key, key_size, &last);
                         if (!trie_node_attach(found.prev, chain, false)) {
-                                // TODO: delete chain
+                                delete_up(root, chain);
                                 return false;
                         }
                 }
