@@ -99,4 +99,6 @@ struct trie_node *trie_next_delete(struct trie *obj, struct trie_node *node);
  */
 bool trie_data(struct trie_node *node, void **data);
 
+bool trie_export_dot(struct trie *obj, const char *file);
+
 #endif /* !TRIE_H */

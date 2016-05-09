@@ -10,6 +10,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <strings.h>
+#include <stdio.h>
 
 struct trie_node {
         uint8_t symbol;
@@ -34,6 +35,8 @@ static inline struct trie_node *trie_node_new(const struct trie *obj,
                                               uint8_t symbol)
 {
         assert(obj != NULL);
+        assert(obj->allocator != NULL);
+
         struct trie_node *node = obj->allocator(sizeof(struct trie_node));
         memset(node, 0, sizeof(*node));
         if (node) {
@@ -95,10 +98,11 @@ static inline bool trie_node_attach(struct trie_node *node,
 {
         assert(node != NULL);
         assert(attached != NULL);
-        assert(!attached->parent);
-        assert(attached->negative == NULL);
+        assert(!attached->parent && "the node already attached");
+        assert(attached->negative == NULL && "can't attach a subtree");
 
         if (is_positive) {
+                // is the node full?
                 if (node->data_flag || node->positive)
                         return false;
                 node->positive = attached;
@@ -117,7 +121,9 @@ static inline bool trie_node_attach(struct trie_node *node,
 static inline void trie_node_set_chain_parent(struct trie_node *node,
                                               struct trie_node *parent)
 {
-        // go to the end of negative chain
+        assert(node != NULL);
+
+        // go to the end of a negative chain
         while (trie_node_get_negative(node)) {
                 node = trie_node_get_negative(node);
         }
@@ -127,6 +133,8 @@ static inline void trie_node_set_chain_parent(struct trie_node *node,
 static inline struct trie_node *
 trie_node_get_chain_parent(struct trie_node *node)
 {
+        assert(node != NULL);
+
         while (trie_node_get_negative(node)) {
                 node = trie_node_get_negative(node);
         }
@@ -166,10 +174,13 @@ trie_find(struct trie_node *root, const uint8_t *key, const size_t key_size)
         return res;
 }
 
-static inline struct trie_node *new_chain(const struct trie *obj,
-                                          const uint8_t *str, const size_t size,
-                                          struct trie_node **last)
+static inline struct trie_node *trie_new_chain(const struct trie *obj,
+                                               const uint8_t *str,
+                                               const size_t size,
+                                               struct trie_node **last)
 {
+        assert(obj != NULL);
+
         if (str == NULL || size == 0)
                 return NULL;
 
@@ -213,9 +224,12 @@ static inline struct trie_node *begin(struct trie_node *node)
         return node;
 }
 
-static inline struct trie_node *delete_up(struct trie *obj,
+static inline struct trie_node *trie_node_delete_up(struct trie *obj,
                                           struct trie_node *node)
 {
+        assert(obj != NULL);
+        assert(node != NULL);
+
         struct trie_node *delete = NULL;
         do {
                 delete = node;
@@ -225,9 +239,11 @@ static inline struct trie_node *delete_up(struct trie *obj,
         return node;
 }
 
-static inline struct trie_node *delete_right(struct trie *obj,
+static inline struct trie_node *trie_node_delete_right(struct trie *obj,
                                              struct trie_node *node)
 {
+        assert(obj != NULL);
+
         if (node == NULL)
                 return node;
         struct trie_node *delete = trie_node_get_negative(node);
@@ -241,25 +257,50 @@ static inline struct trie_node *delete_right(struct trie *obj,
         return node;
 }
 
-static inline struct trie_node *delete_end(struct trie *obj,
+static inline struct trie_node *trie_node_delete_end(struct trie *obj,
                                            struct trie_node *node)
 {
+        assert(obj != NULL);
+        assert(node != NULL);
+        assert(trie_node_get_negative(node) == NULL);
+
         struct trie_node *prev = trie_node_get_parent(node);
         if (!prev) {
-                prev = obj->root;
-        }
-        assert(prev != NULL);
-        if (trie_node_get_positive(prev) == node) {
-                obj->deallocator(node);
-                trie_node_set_positive(prev, NULL);
-        } else {
-                prev = trie_node_get_positive(prev);
-                while (trie_node_get_negative(prev) != node) {
-                        prev = trie_node_get_negative(prev);
+                // only one value in the trie?
+                if (node == obj->root) {
+                        obj->deallocator(obj->root);
+                        obj->root = NULL;
+                        return NULL;
                 }
-                trie_node_set_parent(prev, trie_node_get_parent(node));
-                obj->deallocator(node);
+        } else {
+                // The node has a parent and hasn't negative nodes.
+                // o
+                // |
+                // x <- this node whill be deleted
+                if (trie_node_get_positive(prev) == node) {
+                        obj->deallocator(node);
+                        trie_node_set_positive(prev, NULL);
+                        return prev;
+                }
         }
+
+        // o
+        // |
+        // o-o-...-o-x - the last node is node to delete
+        // |       ^- we find the previous node.
+        // ...
+        //
+        // or
+        //
+        // o-o-...-o-x
+        // |       ^
+        // ...
+        prev = prev ? trie_node_get_positive(prev) : obj->root;
+        while (trie_node_get_negative(prev) != node) {
+                prev = trie_node_get_negative(prev);
+        }
+        trie_node_set_parent(prev, trie_node_get_parent(node));
+        obj->deallocator(node);
         return prev;
 }
 
@@ -307,12 +348,12 @@ bool trie_insert(struct trie *root, const uint8_t *key, const size_t key_size,
         struct trie_node *last = NULL;
         if (found.sz == 0) {
                 if (found.prev == NULL)
-                        root->root = new_chain(root, key, key_size, &last);
+                        root->root = trie_new_chain(root, key, key_size, &last);
                 else {
                         struct trie_node *chain =
-                            new_chain(root, key, key_size, &last);
+                            trie_new_chain(root, key, key_size, &last);
                         if (!trie_node_attach(found.prev, chain, false)) {
-                                delete_up(root, chain);
+                                trie_node_delete_up(root, chain);
                                 return false;
                         }
                 }
@@ -320,8 +361,8 @@ bool trie_insert(struct trie *root, const uint8_t *key, const size_t key_size,
         } else if (found.sz == key_size) {
                 last = found.prev;
         } else {
-                struct trie_node *tail =
-                    new_chain(root, &key[found.sz], key_size - found.sz, &last);
+                struct trie_node *tail = trie_new_chain(
+                    root, &key[found.sz], key_size - found.sz, &last);
                 trie_node_attach(found.prev, tail,
                                  key[found.sz] == found.prev->symbol);
         }
@@ -350,8 +391,8 @@ bool trie_remove(struct trie *obj, const uint8_t *key, const size_t key_size,
 {
         struct find_res found = trie_find(obj->root, key, key_size);
         if (found.sz == key_size && found.prev) {
-                if (trie_data(found.last, data)) {
-                        trie_next_delete(obj, found.last);
+                if (trie_data(found.prev, data)) {
+                        trie_next_delete(obj, found.prev);
                         return true;
                 }
         }
@@ -394,11 +435,17 @@ struct trie_node *trie_next_delete(struct trie *obj, struct trie_node *node)
                 return NULL;
 
         if (trie_node_get_negative(node)) {
-                node = delete_right(obj, node);
+                node = trie_node_delete_right(obj, node);
         } else {
-                node = delete_up(obj, node);
-                if (node)
-                        node = delete_right(obj, node);
+                struct trie_node *parent = trie_node_get_parent(node);
+                if (parent && trie_node_get_positive(parent) == node) {
+                        node = trie_node_delete_up(obj, node);
+                        if (node) {
+                                node = trie_node_delete_right(obj, node);
+                        }
+                } else {
+                        node = trie_node_delete_end(obj, node);
+                }
         }
         if (node) {
                 node = begin(node);
@@ -407,4 +454,56 @@ struct trie_node *trie_next_delete(struct trie *obj, struct trie_node *node)
                 obj->root = NULL;
         }
         return node;
+}
+
+bool trie_export_dot(struct trie *obj, const char *file_name)
+{
+        FILE *file                = fopen(file_name, "w");
+        const static char *header = "digraph name {\n";
+        fwrite(header, sizeof(header[0]), strlen(header), file);
+        struct trie_node *node = obj->root;
+        while (node) {
+                fprintf(file, "{ rank = same; N%zu", (size_t)node);
+                for (struct trie_node *i = trie_node_get_negative(node); i;
+                     i                   = trie_node_get_negative(i)) {
+                        fprintf(file, ", N%zu", (size_t)i);
+                }
+                fprintf(file, " }\n");
+
+                char symbol[4] = {'\0'};
+                symbol[0]      = (char)node->symbol;
+                symbol[1]      = '\0';
+                if (symbol[0] == '\0') {
+                        symbol[0] = '\\';
+                        symbol[1] = '\\';
+                        symbol[2] = '0';
+                        symbol[3] = '\0';
+                }
+                fprintf(file, "\tN%zu [label=\"%s\"];\n", (size_t)node, symbol);
+                struct trie_node *p = node->positive, *n = node->negative;
+                if (p)
+                        fprintf(file, "\tN%zu -> %s%zu [%s];\n", (size_t)node,
+                                node->data_flag ? "D" : "N", (size_t)p,
+                                node->data_flag ? "color=\"steelblue\""
+                                                : "color=\"chartreuse\"");
+                if (n)
+                        fprintf(file, "\tN%zu -> N%zu %s;\n", (size_t)node,
+                                (size_t)n,
+                                node->parent ? "[style=\"dotted\"]"
+                                             : "[color=\"indianred\"]");
+
+                if (trie_node_get_positive(node) == NULL) {
+                        while (node && trie_node_get_negative(node) == NULL) {
+                                node = trie_node_get_parent(node);
+                        }
+                        if (node)
+                                node = trie_node_get_negative(node);
+                } else {
+                        node = trie_node_get_positive(node);
+                }
+        }
+
+        fprintf(file, "}\n");
+
+        return true;
 }
